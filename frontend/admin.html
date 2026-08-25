@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="font-1">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Painel do Professor</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>Painel do Professor</h1>
+
+    <div class="card">
+      <h2>Nova prova</h2>
+      <input type="text" id="exam-title" placeholder="Título da prova" />
+      <br /><br />
+      <textarea id="exam-desc" placeholder="Descrição" rows="3"></textarea>
+      <br /><br />
+      <input type="text" id="exam-duration" placeholder="Duração (minutos)" value="60" />
+      <br /><br />
+      <button onclick="createExam()">Criar prova</button>
+    </div>
+
+    <div class="card">
+      <h2>Minhas provas</h2>
+      <div id="exams-list"></div>
+    </div>
+
+    <div class="card">
+      <h2>Adicionar questão</h2>
+      <input type="text" id="q-exam-id" placeholder="ID da prova" />
+      <br /><br />
+      <textarea id="q-statement" placeholder="Enunciado" rows="3"></textarea>
+      <br /><br />
+      <select id="q-kind">
+        <option value="multiple_choice">Múltipla escolha</option>
+        <option value="essay">Dissertativa</option>
+      </select>
+      <br /><br />
+      <input type="text" id="q-options" placeholder="Alternativas separadas por | (ex.: A|B|C|D|E)" />
+      <br /><br />
+      <input type="text" id="q-correct" placeholder="Alternativa correta (ex.: B)" />
+      <br /><br />
+      <button onclick="addQuestion()">Adicionar questão</button>
+    </div>
+
+    <div class="card">
+      <h2>Editar questão existente</h2>
+      <input type="text" id="edit-q-id" placeholder="ID da questão" />
+      <button class="secondary" onclick="loadQuestionForEdit()">Carregar questão</button>
+      <div id="edit-q-form" style="margin-top:1em; display:none;">
+        <textarea id="edit-q-statement" placeholder="Enunciado" rows="3"></textarea>
+        <br /><br />
+        <input type="text" id="edit-q-options" placeholder="Alternativas separadas por | (deixe em branco se dissertativa)" />
+        <br /><br />
+        <input type="text" id="edit-q-correct" placeholder="Alternativa correta" />
+        <br /><br />
+        <button onclick="saveQuestionEdit()">Salvar alterações</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Ver provas enviadas pelos alunos</h2>
+      <input type="text" id="attempts-exam-id" placeholder="ID da prova" />
+      <button class="secondary" onclick="loadAttempts()">Buscar tentativas</button>
+      <div id="attempts-list" style="margin-top:1em;"></div>
+      <div id="attempt-detail" style="margin-top:1em;"></div>
+    </div>
+  </div>
+
+  <script>
+    const token = localStorage.getItem("exam_token");
+    if (!token) window.location.href = "/index.html";
+
+    let currentEditQuestionId = null;
+
+    async function apiFetch(url, options = {}) {
+      options.headers = {
+        ...(options.headers || {}),
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      };
+      return fetch(url, options);
+    }
+
+    async function loadExams() {
+      const exams = await (await apiFetch("/exams")).json();
+      document.getElementById("exams-list").innerHTML = exams
+        .map(
+          (e) => `<p>#${e.id} — ${e.title} ${e.is_published ? "✅ publicada" : "📝 rascunho"}
+          ${!e.is_published ? `<button class="secondary" onclick="publishExam(${e.id})">Publicar</button>` : ""}</p>`
+        )
+        .join("");
+    }
+
+    async function createExam() {
+      const title = document.getElementById("exam-title").value;
+      const description = document.getElementById("exam-desc").value;
+      const duration_minutes = parseInt(document.getElementById("exam-duration").value, 10) || 60;
+      await apiFetch("/exams", {
+        method: "POST",
+        body: JSON.stringify({ title, description, duration_minutes }),
+      });
+      loadExams();
+    }
+
+    async function publishExam(id) {
+      await apiFetch(`/exams/${id}/publish`, { method: "POST" });
+      loadExams();
+    }
+
+    async function addQuestion() {
+      const examId = document.getElementById("q-exam-id").value;
+      const statement = document.getElementById("q-statement").value;
+      const kind = document.getElementById("q-kind").value;
+      const options = document.getElementById("q-options").value || null;
+      const correct_option = document.getElementById("q-correct").value || null;
+      await apiFetch(`/exams/${examId}/questions`, {
+        method: "POST",
+        body: JSON.stringify({ statement, kind, options, correct_option }),
+      });
+      alert("Questão adicionada!");
+    }
+
+    async function loadQuestionForEdit() {
+      const id = document.getElementById("edit-q-id").value;
+      const res = await apiFetch(`/questions/${id}`);
+      if (!res.ok) {
+        alert("Questão não encontrada.");
+        return;
+      }
+      const q = await res.json();
+      currentEditQuestionId = q.id;
+      document.getElementById("edit-q-statement").value = q.statement;
+      document.getElementById("edit-q-options").value = q.options || "";
+      document.getElementById("edit-q-form").style.display = "block";
+    }
+
+    async function saveQuestionEdit() {
+      if (!currentEditQuestionId) return;
+      const statement = document.getElementById("edit-q-statement").value;
+      const options = document.getElementById("edit-q-options").value || null;
+      const correct_option = document.getElementById("edit-q-correct").value || null;
+      await apiFetch(`/questions/${currentEditQuestionId}`, {
+        method: "PUT",
+        body: JSON.stringify({ statement, options, correct_option }),
+      });
+      alert("Questão atualizada!");
+    }
+
+    async function loadAttempts() {
+      const examId = document.getElementById("attempts-exam-id").value;
+      const attempts = await (await apiFetch(`/exams/${examId}/attempts`)).json();
+      document.getElementById("attempt-detail").innerHTML = "";
+      if (!attempts.length) {
+        document.getElementById("attempts-list").innerHTML = "<p>Nenhuma tentativa ainda para esta prova.</p>";
+        return;
+      }
+      document.getElementById("attempts-list").innerHTML = attempts
+        .map(
+          (a) => `<p>Tentativa #${a.id} — status: ${a.status} ${a.submitted_at ? "— enviada em " + new Date(a.submitted_at).toLocaleString("pt-BR") : "— em andamento"}
+          <button class="secondary" onclick="viewAttempt(${a.id})">Ver respostas</button></p>`
+        )
+        .join("");
+    }
+
+    async function viewAttempt(attemptId) {
+      const detail = await (await apiFetch(`/attempts/${attemptId}/detail`)).json();
+      const answersHtml = detail.answers
+        .map((a, idx) => {
+          const respostaAluno = a.selected_option || a.essay_text || "(sem resposta)";
+          const acertou = a.kind === "multiple_choice" && a.correct_option
+            ? (a.selected_option === a.correct_option ? "✅ correta" : `❌ incorreta (gabarito: ${a.correct_option})`)
+            : "";
+          return `<div class="card">
+            <p><strong>Questão ${idx + 1}</strong> (#${a.question_id})</p>
+            <p>${a.statement}</p>
+            <p><strong>Resposta da aluna:</strong> ${respostaAluno} ${acertou}</p>
+          </div>`;
+        })
+        .join("");
+      document.getElementById("attempt-detail").innerHTML = `
+        <div class="card">
+          <p><strong>Aluno:</strong> ${detail.student_username}</p>
+          <p><strong>Status:</strong> ${detail.status}</p>
+          <p><strong>Eventos de integridade registrados:</strong> ${detail.integrity_event_count}</p>
+          <p><strong>Hash de integridade:</strong> ${detail.integrity_hash || "(ainda não enviada)"}</p>
+        </div>
+        ${answersHtml}
+      `;
+    }
+
+    loadExams();
+  </script>
+</body>
+</html>
