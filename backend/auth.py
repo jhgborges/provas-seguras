@@ -1,13 +1,15 @@
 """
-Autenticação via JWT e hashing de senha (bcrypt).
+Autenticação via JWT e hashing de senha (bcrypt, usado diretamente —
+sem passlib, que tem um bug de compatibilidade com versões recentes
+do bcrypt em seu autoteste interno).
 """
 import os
 from datetime import datetime, timedelta, timezone
 
+import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -18,16 +20,20 @@ SECRET_KEY = os.environ.get("EXAM_JWT_SECRET", "troque-esta-chave-em-producao")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 240
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
+# bcrypt trunca em 72 bytes; cortamos explicitamente para evitar erro
+_MAX_BCRYPT_BYTES = 72
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    plain_bytes = plain.encode("utf-8")[:_MAX_BCRYPT_BYTES]
+    return bcrypt.checkpw(plain_bytes, hashed.encode("utf-8"))
 
 
 def hash_password(plain: str) -> str:
-    return pwd_context.hash(plain)
+    plain_bytes = plain.encode("utf-8")[:_MAX_BCRYPT_BYTES]
+    return bcrypt.hashpw(plain_bytes, bcrypt.gensalt()).decode("utf-8")
 
 
 def create_access_token(data: dict, expires_minutes: int = ACCESS_TOKEN_EXPIRE_MINUTES) -> str:
