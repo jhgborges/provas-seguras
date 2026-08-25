@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="font-1">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Prova em andamento</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="accessibility-bar">
+    <span>Fonte:</span>
+    <button class="secondary" onclick="changeFont(-1)" aria-label="Diminuir fonte">A-</button>
+    <span id="font-level-label">1/7</span>
+    <button class="secondary" onclick="changeFont(1)" aria-label="Aumentar fonte">A+</button>
+
+    <button class="secondary" id="contrast-toggle" onclick="toggleContrast()">Alto contraste</button>
+    <button class="secondary" id="audio-toggle" onclick="toggleAudio()">Audiodescrição</button>
+    <button class="secondary" onclick="speakCurrentQuestion()">🔊 Ouvir questão atual</button>
+  </div>
+
+  <div class="container">
+    <div id="warning-banner" class="warning-banner"></div>
+    <div class="integrity-banner">
+      Esta prova monitora sinais de integridade (troca de aba, saída de tela cheia).
+      O monitoramento não impede sua navegação — apenas registra eventos para revisão.
+    </div>
+
+    <div id="exam-title" class="card"></div>
+    <div id="questions-container"></div>
+
+    <div class="card">
+      <button onclick="submitExam()">Finalizar e enviar prova</button>
+    </div>
+  </div>
+
+  <script src="/static/js/accessibility.js"></script>
+  <script src="/static/js/lockdown.js"></script>
+  <script>
+    const token = localStorage.getItem("exam_token");
+    if (!token) window.location.href = "/index.html";
+
+    let currentQuestions = [];
+    let attemptId = null;
+
+    async function apiFetch(url, options = {}) {
+      options.headers = {
+        ...(options.headers || {}),
+        Authorization: `Bearer ${token}`,
+      };
+      return fetch(url, options);
+    }
+
+    async function init() {
+      const me = await (await apiFetch("/auth/me")).json();
+      Accessibility.init(me);
+      document.getElementById("font-level-label").textContent = `${me.font_level}/7`;
+
+      // Assume-se exame publicado com id 1 para fins de demonstração;
+      // em produção, liste /exams e deixe o aluno escolher.
+      const exams = await (await apiFetch("/exams")).json();
+      const exam = exams[0];
+      if (!exam) {
+        document.getElementById("exam-title").textContent = "Nenhuma prova disponível no momento.";
+        return;
+      }
+      document.getElementById("exam-title").innerHTML = `<h2>${exam.title}</h2><p>${exam.description}</p>`;
+
+      const attempt = await (await apiFetch(`/exams/${exam.id}/start`, { method: "POST" })).json();
+      attemptId = attempt.id;
+
+      currentQuestions = await (await apiFetch(`/exams/${exam.id}/questions`)).json();
+      renderQuestions();
+
+      Lockdown.start({
+        attemptId,
+        token,
+        onWarning: (msg) => {
+          const banner = document.getElementById("warning-banner");
+          banner.textContent = msg;
+          banner.classList.add("visible");
+          setTimeout(() => banner.classList.remove("visible"), 4000);
+        },
+      });
+    }
+
+    function renderQuestions() {
+      const container = document.getElementById("questions-container");
+      container.innerHTML = "";
+      currentQuestions.forEach((q, idx) => {
+        const card = document.createElement("div");
+        card.className = "card";
+        card.id = `question-${q.id}`;
+
+        let optionsHtml = "";
+        if (q.kind === "multiple_choice" && q.options) {
+          optionsHtml = q.options
+            .split("|")
+            .map(
+              (opt) => `
+              <label class="question-option">
+                <input type="radio" name="q_${q.id}" value="${opt}" onchange="saveAnswer(${q.id}, this.value)" />
+                ${opt}
+              </label>`
+            )
+            .join("");
+        } else {
+          optionsHtml = `<textarea rows="6" onblur="saveAnswer(${q.id}, null, this.value)" placeholder="Digite sua resposta..."></textarea>`;
+        }
+
+        card.innerHTML = `
+          <p><strong>Questão ${idx + 1}</strong></p>
+          <p>${q.statement}</p>
+          ${q.image_base64 ? `<img src="data:image/png;base64,${q.image_base64}" style="max-width:100%;" />` : ""}
+          ${optionsHtml}
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    async function saveAnswer(questionId, selectedOption, essayText) {
+      await apiFetch(`/attempts/${attemptId}/answer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question_id: questionId,
+          selected_option: selectedOption,
+          essay_text: essayText || null,
+        }),
+      });
+    }
+
+    async function submitExam() {
+      if (!confirm("Tem certeza que deseja finalizar e enviar a prova?")) return;
+      await apiFetch(`/attempts/${attemptId}/submit`, { method: "POST" });
+      Lockdown.stop();
+      alert("Prova enviada com sucesso!");
+      window.location.href = "/index.html";
+    }
+
+    function changeFont(delta) {
+      let level = Accessibility.state.currentFontLevel + delta;
+      level = Math.min(7, Math.max(1, level));
+      Accessibility.applyFontLevel(level);
+      Accessibility.persistPrefs(token, { font_level: level });
+      document.getElementById("font-level-label").textContent = `${level}/7`;
+    }
+
+    function toggleContrast() {
+      const enabled = !Accessibility.state.highContrast;
+      Accessibility.applyHighContrast(enabled);
+      Accessibility.persistPrefs(token, { high_contrast: enabled });
+    }
+
+    function toggleAudio() {
+      const enabled = !Accessibility.state.audioDescriptionEnabled;
+      Accessibility.setAudioDescription(enabled);
+      Accessibility.persistPrefs(token, { audio_description: enabled });
+    }
+
+    function speakCurrentQuestion() {
+      const visible = currentQuestions[0];
+      if (visible) Accessibility.speak(visible.statement);
+    }
+
+    init();
+  </script>
+</body>
+</html>

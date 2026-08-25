@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="font-1">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sistema de Provas Remotas — Login</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>Sistema de Provas Remotas</h1>
+      <p>Acesso acessível para alunos neurodivergentes — controle de fonte, contraste e audiodescrição disponíveis após o login.</p>
+      <form id="login-form">
+        <label for="username">Usuário</label>
+        <input type="text" id="username" required />
+        <br /><br />
+        <label for="password">Senha</label>
+        <input type="password" id="password" required />
+        <br /><br />
+        <button type="submit">Entrar</button>
+      </form>
+      <p id="error-msg" style="color:#b91c1c;"></p>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById("login-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const username = document.getElementById("username").value;
+      const password = document.getElementById("password").value;
+      const body = new URLSearchParams({ username, password });
+
+      const res = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+      });
+
+      if (!res.ok) {
+        document.getElementById("error-msg").textContent = "Usuário ou senha inválidos.";
+        return;
+      }
+      const data = await res.json();
+      localStorage.setItem("exam_token", data.access_token);
+
+      const meRes = await fetch("/auth/me", {
+        headers: { Authorization: `Bearer ${data.access_token}` },
+      });
+      const me = await meRes.json();
+      window.location.href = me.role === "admin" ? "/admin.html" : "/exam.html";
+    });
+  </script>
+</body>
+</html>
